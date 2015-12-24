@@ -110,11 +110,11 @@ func messageHandler(conn *net.TCPConn, message string) {
 		return
 	}
 
-	conn.RemoteAddr().String()
+	//conn.RemoteAddr().String()
 
 	response = "[" + time.Now().String() + "] --> " + message
 	response = message
-	//fmt.Println(response)
+	fmt.Println(response)
 	b := []byte(response)
 	conn.Write(b)
 }
@@ -132,11 +132,10 @@ func updateHeartBeat(conn *net.TCPConn, message string) (isHeartBeat bool) {
 	connTag := conn.RemoteAddr().String()
 	lastCns, ok := HB_HASHMAP[connTag]
 	if !ok {
-		// Connection不在Map中，当心跳处理
+		// Connection不在Map中，当做心跳处理
 		return true
 	}
 	now := time.Now().Unix()
-	// fmt.Println(now, lastCns.LastBeat, (now - lastCns.LastBeat), lastCns.MissBeat)
 	// 心跳超时
 	if (now - lastCns.LastBeat) > HB_EXPIRED {
 		lastCns.LastBeat = now
@@ -153,7 +152,6 @@ func heartBeatToleratePolling() {
 HB_CHECKRECHECK:
 	for _, connStruct := range HB_HASHMAP {
 		// 连续错过的心跳超过最大阈值
-		//fmt.Println(connStruct.MissBeat, HEART_BEAT_TOLERATE)
 		if connStruct.MissBeat >= HEART_BEAT_TOLERATE {
 			fmt.Printf("TOLERATE: %d\n", connStruct.MissBeat)
 			onHeartBeatExpired(connStruct.Conn)
@@ -161,15 +159,6 @@ HB_CHECKRECHECK:
 	}
 
 	time.Sleep(1 * time.Second)
-	/*
-		timer2 := time.NewTicker(2 * time.Second)
-		for {
-			select {
-			case <-timer2.C:
-				testTimer2()
-			}
-		}
-	*/
 	goto HB_CHECKRECHECK
 }
 
