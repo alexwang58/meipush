@@ -7,10 +7,14 @@ import (
 	//"os"
 	"math/rand"
 	"strconv"
-	//"time"
+	"time"
 )
 
-var quitSemaphore chan bool
+var (
+	quitSemaphore     chan bool
+	HeartBeatDuration int = 5
+	TestConnections   int = 1
+)
 
 const HB_STR = "%0_#\n"
 
@@ -46,14 +50,14 @@ var exampleMessage = []string{
 var exampleMessageLen int = len(exampleMessage)
 
 func main() {
-	for i := 1; i <= 250; i++ {
+	for i := 1; i <= TestConnections; i++ {
 		var tcpAddr *net.TCPAddr
 		tcpAddr, _ = net.ResolveTCPAddr("tcp", "127.0.0.1:9999")
 
 		conn, _ := net.DialTCP("tcp", nil, tcpAddr)
 		ClientConn := &ClientConn{Conn: conn, Status: true}
 		//conn.SetDeadline(0 * time.Duration)
-		defer conn.Close()
+		defer ClientConn.Conn.Close()
 		fmt.Println("connected!" + strconv.Itoa(i))
 		go onMessageRecieved(ClientConn)
 	}
@@ -91,11 +95,17 @@ func sendMessage(client *ClientConn) {
 			fmt.Println("[SendMsg]Close:" + client.Conn.RemoteAddr().String())
 			break
 		}
-
+		time.Sleep(time.Duration(3) * time.Second)
 		rIdx := rand.Intn(exampleMessageLen)
-		b := []byte(exampleMessage[rIdx])
+		message := messageWraper(exampleMessage[rIdx])
+		fmt.Println("[" + client.Conn.RemoteAddr().String() + "] --> " + message)
+		b := []byte(message)
 		client.Conn.Write(b)
 	}
+}
+
+func messageWraper(message string) string {
+	return message + "\n"
 }
 
 func sendHeartBeat(client *ClientConn, closeInfo chan byte) {
@@ -108,7 +118,7 @@ func sendHeartBeat(client *ClientConn, closeInfo chan byte) {
 		//slp := rand.Intn(10)
 
 		//fmt.Printf("RandSleep: %d\n", slp)
-		//time.Sleep(time.Duration(slp) * time.Second)
+		time.Sleep(time.Duration(HeartBeatDuration) * time.Second)
 	}
 }
 

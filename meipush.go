@@ -14,7 +14,7 @@ import (
 var (
 	HEART_BEAT_TOLERATE int8 = 2
 	quitSemaphore       chan bool
-	HB_EXPIRED          int64 = 2
+	HB_EXPIRED          int64 = 10
 	HB_CHECK                  = make(map[string]bool)
 	MAX_CONNECTION_POOL       = 256
 	CONNECTION_POOL           = 0
@@ -23,6 +23,7 @@ var (
 
 const (
 	HB_STR = "%0_#\n"
+	//HB_TOLERATE_DURATION = HEART_BEAT_TOLERATE * HB_EXPIRED
 )
 
 type Connections struct {
@@ -112,8 +113,9 @@ func messageHandler(conn *net.TCPConn, message string) {
 
 	//conn.RemoteAddr().String()
 
-	response = "[" + time.Now().String() + "] --> " + message
-	response = message
+	//response = "[" + time.Now().String() + "] --> " + message
+	response = "[" + conn.RemoteAddr().String() + "] --> " + message
+	//response = message
 	fmt.Println(response)
 	b := []byte(response)
 	conn.Write(b)
@@ -127,6 +129,7 @@ func updateHeartBeat(conn *net.TCPConn, message string) (isHeartBeat bool) {
 		// 不是心跳
 		return
 	}
+	//fmt.Print("[REV: " + message + "--" + HB_STR + "]")
 
 	isHeartBeat = true
 	connTag := conn.RemoteAddr().String()
@@ -136,22 +139,34 @@ func updateHeartBeat(conn *net.TCPConn, message string) (isHeartBeat bool) {
 		return true
 	}
 	now := time.Now().Unix()
-	// 心跳超时
-	if (now - lastCns.LastBeat) > HB_EXPIRED {
+	lastCns.LastBeat = now
+	lastCns.MissBeat = 0
+	HB_HASHMAP[connTag] = lastCns
+	/*
+		// 心跳超时
+		fmt.Println(now, lastCns.LastBeat, (now - lastCns.LastBeat))
+		if (now - lastCns.LastBeat) > HB_EXPIRED {
+			fmt.Println("错过")
+			lastCns.MissBeat += 1
+		}
 		lastCns.LastBeat = now
-		lastCns.MissBeat += 1
 		// 说好的指针呢
 		HB_HASHMAP[connTag] = lastCns
-	}
-
+	*/
 	fmt.Printf("HB@%s\n", connTag)
 	return
 }
 
 func heartBeatToleratePolling() {
 HB_CHECKRECHECK:
-	for _, connStruct := range HB_HASHMAP {
+	now := time.Now().Unix()
+	for connTag, connStruct := range HB_HASHMAP {
 		// 连续错过的心跳超过最大阈值
+		if (now - connStruct.LastBeat) > HB_EXPIRED {
+			fmt.Println("错过")
+			connStruct.MissBeat += 1
+			HB_HASHMAP[connTag] = connStruct
+		}
 		if connStruct.MissBeat >= HEART_BEAT_TOLERATE {
 			fmt.Printf("TOLERATE: %d\n", connStruct.MissBeat)
 			onHeartBeatExpired(connStruct.Conn)
