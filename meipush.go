@@ -6,8 +6,9 @@ import (
 	"net"
 	"os"
 	// "runtime"
+	mp_util "github.com/alexwang58/meipush/util"
 	"log"
-	"strconv"
+	//"strconv"
 	"time"
 )
 
@@ -16,9 +17,11 @@ var (
 	quitSemaphore       chan bool
 	HB_EXPIRED          int64 = 10
 	HB_CHECK                  = make(map[string]bool)
-	MAX_CONNECTION_POOL       = 256
+	MAX_CONNECTION_POOL       = 2
 	CONNECTION_POOL           = 0
 	FULL_INFO_SET             = false
+	limitListener       *mp_util.LimitListener
+	//MAINTAIN_CONNECTION chan bool
 )
 
 const (
@@ -46,44 +49,63 @@ func main() {
 		log.Fatalln(err)
 	}
 	tcpListener, err := net.ListenTCP("tcp", tcpAddr)
+	limitListener = mp_util.NewLimitListener(tcpListener, MAX_CONNECTION_POOL)
 	if err != nil {
 		log.Fatalln(err)
 		os.Exit(1)
 	}
 	defer tcpListener.Close()
 	//fmt.Printf("ConnectInstance:%d\n", i)
-	connectionInstance(tcpListener)
+	//connectionInstance(tcpListener)
+	connectionInstance(limitListener)
 	//}
 
 	//<-quitSemaphore
 }
 
-func connectionInstance(tcpListener *net.TCPListener) {
+//func connectionInstance(tcpListener *net.TCPListener) {
+func connectionInstance(limitListener *mp_util.LimitListener) {
 	go heartBeatToleratePolling()
-	for {
-		if CONNECTION_POOL >= MAX_CONNECTION_POOL {
-			if !FULL_INFO_SET {
-				fmt.Println("Connection Full: " + strconv.Itoa(CONNECTION_POOL))
-				FULL_INFO_SET = true
-			}
-			continue
+	/*
+		limitListenerConn, err := limitListener.Accept() //tcpListener.AcceptTCP()
+		if err != nil {
+			//continue
+			log.Fatalln(err)
 		}
-		tcpConn, err := tcpListener.AcceptTCP()
+		fmt.Println("A client connected : " + limitListenerConn.RemoteAddr().String())
+		//go tcpPipe(tcpConn)
+		go tcpPipe(limitListenerConn.TCPConn)
+	*/
+
+	for {
+		/*
+			if CONNECTION_POOL >= MAX_CONNECTION_POOL {
+				if !FULL_INFO_SET {
+					fmt.Println("Connection Full: " + strconv.Itoa(CONNECTION_POOL))
+					FULL_INFO_SET = true
+				}
+				continue
+			}
+		*/
+		limitListenerConn, err := limitListener.Accept() //tcpListener.AcceptTCP()
 		if err != nil {
 			//continue
 			log.Fatalln(err)
 		}
 		CONNECTION_POOL++
-		fmt.Println("A client connected : " + tcpConn.RemoteAddr().String())
-		go tcpPipe(tcpConn)
+		fmt.Println("A client connected : " + limitListenerConn.RemoteAddr().String())
+		// go tcpPipe(tcpConn)
+		go tcpPipe(limitListenerConn.TCPConn)
+		//<-MAINTAIN_CONNECTION
 	}
+
 }
 
 func tcpPipe(conn *net.TCPConn) {
 	ipStr := conn.RemoteAddr().String()
 	defer func() {
 		fmt.Println("disconnected :" + ipStr)
-		conn.Close()
+		closeConnection(conn)
 	}()
 
 	reader := bufio.NewReader(conn)
@@ -115,8 +137,7 @@ func messageHandler(conn *net.TCPConn, message string) {
 
 	//response = "[" + time.Now().String() + "] --> " + message
 	response = "[" + conn.RemoteAddr().String() + "] --> " + message
-	//response = message
-	fmt.Println(response)
+	// fmt.Println(response)
 	b := []byte(response)
 	conn.Write(b)
 }
@@ -153,7 +174,7 @@ func updateHeartBeat(conn *net.TCPConn, message string) (isHeartBeat bool) {
 		// 说好的指针呢
 		HB_HASHMAP[connTag] = lastCns
 	*/
-	fmt.Printf("HB@%s\n", connTag)
+	//fmt.Printf("HB@%s\n", connTag)
 	return
 }
 
@@ -169,7 +190,7 @@ HB_CHECKRECHECK:
 		}
 		if connStruct.MissBeat >= HEART_BEAT_TOLERATE {
 			fmt.Printf("TOLERATE: %d\n", connStruct.MissBeat)
-			onHeartBeatExpired(connStruct.Conn)
+			closeConnection(connStruct.Conn)
 		}
 	}
 
@@ -177,9 +198,10 @@ HB_CHECKRECHECK:
 	goto HB_CHECKRECHECK
 }
 
-func onHeartBeatExpired(conn *net.TCPConn) {
+func closeConnection(conn *net.TCPConn) {
 	conn.Close()
 	// 将关闭链接，从心跳监测中移除
 	delete(HB_HASHMAP, conn.RemoteAddr().String())
+	limitListener.Release()
 	fmt.Printf("Closed %s\n", conn.RemoteAddr().String())
 }
