@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	//"os"
 	"math/rand"
 	"strconv"
@@ -19,11 +20,13 @@ var (
 const HB_STR = "%0_#\n"
 
 type ClientConn struct {
+	tag    int
 	Conn   *net.TCPConn
 	Status bool // false连接已断开
 }
 
 var exampleMessage = []string{
+	"类与结构体在C++中有三点区别。[1] ",
 	/*
 		"类与结构体在C++中有三点区别。[1] ",
 		"（1）class中默认的成员访问权限是private的，而struct中则是public的。",
@@ -54,8 +57,12 @@ func main() {
 		var tcpAddr *net.TCPAddr
 		tcpAddr, _ = net.ResolveTCPAddr("tcp", "127.0.0.1:9999")
 
-		conn, _ := net.DialTCP("tcp", nil, tcpAddr)
-		ClientConn := &ClientConn{Conn: conn, Status: true}
+		conn, err := net.DialTCP("tcp", nil, tcpAddr)
+		if err != nil {
+			fmt.Println("[连接服务器失败] " + err.Error())
+			os.Exit(0)
+		}
+		ClientConn := &ClientConn{tag: i, Conn: conn, Status: true}
 		//conn.SetDeadline(0 * time.Duration)
 		defer ClientConn.Conn.Close()
 		fmt.Println("connected!" + strconv.Itoa(i))
@@ -71,21 +78,21 @@ func onMessageRecieved(client *ClientConn) {
 	go sendHeartBeat(client, closeInfo)
 	go sendMessage(client)
 	for {
-		//msg, err := reader.ReadString('\n')
-		_, err := reader.ReadString('\n')
+		msg, err := reader.ReadString('\n')
+		//_, err := reader.ReadString('\n')
 		if err != nil {
+			onConnectionClose(client)
 			if err.Error() == "EOF" {
 				fmt.Println("链接已关闭")
 			} else {
 				fmt.Println(err.Error())
 			}
-			onConnectionClose(client)
 			// quitSemaphore <- true
 			//os.Exit(1)
 			break
 		}
 		//msg
-		//fmt.Println("-------------\n" + msg + "-------------\n\n")
+		fmt.Println("[" + client.Conn.RemoteAddr().String() + "/" + strconv.Itoa(client.tag) + "] >>>> " + msg)
 	}
 }
 
@@ -98,7 +105,7 @@ func sendMessage(client *ClientConn) {
 		time.Sleep(time.Duration(3) * time.Second)
 		rIdx := rand.Intn(exampleMessageLen)
 		message := messageWraper(exampleMessage[rIdx])
-		fmt.Println("[" + client.Conn.RemoteAddr().String() + "] --> " + message)
+		//fmt.Println("[" + client.Conn.RemoteAddr().String() + "/" + strconv.Itoa(client.tag) + "] --> " + message)
 		b := []byte(message)
 		client.Conn.Write(b)
 	}
