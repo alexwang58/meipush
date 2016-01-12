@@ -3,12 +3,13 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"net"
-	"os"
-	// "runtime"
 	mp_util "github.com/alexwang58/meipush/util"
 	"log"
+	"net"
+	"os"
+	"runtime"
 	//"strconv"
+	"strings"
 	"time"
 )
 
@@ -17,9 +18,9 @@ var (
 	quitSemaphore       chan bool
 	HB_EXPIRED          int64 = 10
 	HB_CHECK                  = make(map[string]bool)
-	MAX_CONNECTION_POOL       = 2
-	CONNECTION_POOL           = 0
+	MAX_CONNECTION_POOL       = 3
 	FULL_INFO_SET             = false
+	READER_DELIM        byte  = '\n'
 	limitListener       *mp_util.LimitListener
 	//MAINTAIN_CONNECTION chan bool
 )
@@ -37,8 +38,12 @@ type Connections struct {
 
 var HB_HASHMAP = make(map[string]Connections)
 
+func ENVIRENT_INIT() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+}
+
 func main() {
-	//runtime.GOMAXPROCS(runtime.NumCPU())
+	ENVIRENT_INIT()
 	//for i := 0; i < 10; i++ {
 	var tcpAddr *net.TCPAddr
 	//var lport = "127.0.0.1:" + strconv.Itoa(9980+i)
@@ -66,37 +71,17 @@ func main() {
 //func connectionInstance(tcpListener *net.TCPListener) {
 func connectionInstance(limitListener *mp_util.LimitListener) {
 	go heartBeatToleratePolling()
-	/*
-		limitListenerConn, err := limitListener.Accept() //tcpListener.AcceptTCP()
-		if err != nil {
-			//continue
-			log.Fatalln(err)
-		}
-		fmt.Println("A client connected : " + limitListenerConn.RemoteAddr().String())
-		//go tcpPipe(tcpConn)
-		go tcpPipe(limitListenerConn.TCPConn)
-	*/
 
 	for {
-		/*
-			if CONNECTION_POOL >= MAX_CONNECTION_POOL {
-				if !FULL_INFO_SET {
-					fmt.Println("Connection Full: " + strconv.Itoa(CONNECTION_POOL))
-					FULL_INFO_SET = true
-				}
-				continue
-			}
-		*/
+
 		limitListenerConn, err := limitListener.Accept() //tcpListener.AcceptTCP()
 		if err != nil {
 			//continue
 			log.Fatalln(err)
 		}
-		CONNECTION_POOL++
 		fmt.Println("A client connected : " + limitListenerConn.RemoteAddr().String())
-		// go tcpPipe(tcpConn)
 		go tcpPipe(limitListenerConn.TCPConn)
-		//<-MAINTAIN_CONNECTION
+
 	}
 
 }
@@ -111,7 +96,7 @@ func tcpPipe(conn *net.TCPConn) {
 	reader := bufio.NewReader(conn)
 
 	for {
-		message, err := reader.ReadString('\n')
+		message, err := reader.ReadString(READER_DELIM)
 		if err != nil {
 			return
 		}
@@ -133,9 +118,10 @@ func messageHandler(conn *net.TCPConn, message string) {
 		return
 	}
 
-	//conn.RemoteAddr().String()
+	if commandHandler(conn, message) {
+		return
+	}
 
-	//response = "[" + time.Now().String() + "] --> " + message
 	response = "[" + conn.RemoteAddr().String() + "] --> " + message
 	// fmt.Println(response)
 	b := []byte(response)
@@ -163,18 +149,24 @@ func updateHeartBeat(conn *net.TCPConn, message string) (isHeartBeat bool) {
 	lastCns.LastBeat = now
 	lastCns.MissBeat = 0
 	HB_HASHMAP[connTag] = lastCns
-	/*
-		// 心跳超时
-		fmt.Println(now, lastCns.LastBeat, (now - lastCns.LastBeat))
-		if (now - lastCns.LastBeat) > HB_EXPIRED {
-			fmt.Println("错过")
-			lastCns.MissBeat += 1
-		}
-		lastCns.LastBeat = now
-		// 说好的指针呢
-		HB_HASHMAP[connTag] = lastCns
-	*/
+
 	//fmt.Printf("HB@%s\n", connTag)
+	return
+}
+
+func commandHandler(conn *net.TCPConn, message string) (isCommand bool) {
+	prefix := "#MYB<#CMD>"
+	isCommand = true
+	if !strings.HasPrefix(message, prefix) {
+		isCommand = false
+		return
+	}
+	command := message[len(prefix):]
+	fmt.Println("[COMMAND]>"+command, "CLOSE_CONN")
+	if command == "CLOSE_CONN" {
+		fmt.Println("CloseByClient")
+		closeConnection(conn)
+	}
 	return
 }
 
