@@ -1,7 +1,7 @@
 package util
 
 import (
-	"fmt"
+	//"fmt"
 	"net"
 	"sync"
 )
@@ -24,8 +24,8 @@ func (l *LimitListener) Release() {
 
 func (l *LimitListener) Accept() (*limitListenerConn, error) {
 	l.acquire()
-	fmt.Println("---AcceptTCP")
 	c, err := l.AcceptTCP()
+	c.SetLinger(0) // CLOSE丢弃未完成的ReadWrite
 	if err != nil {
 		l.release()
 		return nil, err
