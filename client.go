@@ -12,9 +12,14 @@ import (
 )
 
 var (
-	quitSemaphore     chan bool
-	HeartBeatDuration int = 5
-	TestConnections   int = 1
+	quitSemaphore         chan bool = make(chan bool)
+	acceptThrough         chan bool = make(chan bool)
+	closeReady            chan bool = make(chan bool)
+	ACCEPT_TCP            bool      = false
+	HeartBeatDuration     int       = 5
+	TestChannelNum        int       = 1
+	WAITIN_ACCEPT_TIMEOUT int       = 3
+	READER_DELIM          byte      = '\n'
 )
 
 const HB_STR = "%0_#\n"
@@ -48,20 +53,22 @@ var exampleMessage = []string{
 	"F",
 	"D",
 	"K",
+	//"#MYB<#CMD>CLOSE_CONN",
 }
 
 var exampleMessageLen int = len(exampleMessage)
 
 func main() {
-	for i := 1; i <= TestConnections; i++ {
+	for i := 1; i <= TestChannelNum; i++ {
 		var tcpAddr *net.TCPAddr
 		tcpAddr, _ = net.ResolveTCPAddr("tcp", "127.0.0.1:9999")
-
 		conn, err := net.DialTCP("tcp", nil, tcpAddr)
 		if err != nil {
 			fmt.Println("[连接服务器失败] " + err.Error())
 			os.Exit(0)
 		}
+		conn.SetLinger(0) // CLOSE丢弃未完成的ReadWrite
+		conn.SetNoDelay(false)
 		ClientConn := &ClientConn{tag: i, Conn: conn, Status: true}
 		//conn.SetDeadline(0 * time.Duration)
 		defer ClientConn.Conn.Close()
@@ -73,24 +80,42 @@ func main() {
 }
 
 func onMessageRecieved(client *ClientConn) {
-	reader := bufio.NewReader(client.Conn)
-	closeInfo := make(chan byte)
-	go sendHeartBeat(client, closeInfo)
+	//closeInfo := make(chan byte)
+	go sendHeartBeat(client)
 	go sendMessage(client)
+	go messageReceiver(client)
+	select {
+	// Server端AcceptTCP
+	case ACCEPT_TCP = <-acceptThrough:
+	// 等待Server端AcceptTCP超时
+	case <-time.After(time.Second * time.Duration(WAITIN_ACCEPT_TIMEOUT)):
+		if !ACCEPT_TCP {
+			// TCP ACCEPT TIMEOUT
+			fmt.Println("TCP ACCEPT TIMEOUT")
+			onConnectionClose(client)
+		}
+	}
+}
+
+func messageReceiver(client *ClientConn) {
+	reader := bufio.NewReader(client.Conn)
 	for {
-		msg, err := reader.ReadString('\n')
+		msg, err := reader.ReadString(READER_DELIM)
 		//_, err := reader.ReadString('\n')
 		if err != nil {
-			onConnectionClose(client)
 			if err.Error() == "EOF" {
 				fmt.Println("链接已关闭")
 			} else {
-				fmt.Println(err.Error())
+				fmt.Println("[ERROR]" + err.Error())
 			}
 			// quitSemaphore <- true
 			//os.Exit(1)
 			break
 		}
+		if !ACCEPT_TCP {
+			go func() { acceptThrough <- true }()
+		}
+
 		//msg
 		fmt.Println("[" + client.Conn.RemoteAddr().String() + "/" + strconv.Itoa(client.tag) + "] >>>> " + msg)
 	}
@@ -98,16 +123,24 @@ func onMessageRecieved(client *ClientConn) {
 
 func sendMessage(client *ClientConn) {
 	for {
-		if !client.Status {
-			fmt.Println("[SendMsg]Close:" + client.Conn.RemoteAddr().String())
-			break
-		}
-		time.Sleep(time.Duration(3) * time.Second)
+		time.Sleep(time.Duration(1) * time.Second)
 		rIdx := rand.Intn(exampleMessageLen)
 		message := messageWraper(exampleMessage[rIdx])
 		//fmt.Println("[" + client.Conn.RemoteAddr().String() + "/" + strconv.Itoa(client.tag) + "] --> " + message)
 		b := []byte(message)
+		if !client.Status {
+			fmt.Println("[SendMsg]Close:" + client.Conn.RemoteAddr().String())
+			break
+		}
 		client.Conn.Write(b)
+		/*
+			select {
+			case <-closeReady:
+				fmt.Println("Ready to close connection")
+			default:
+				client.Conn.Write(b)
+			}
+		*/
 	}
 }
 
@@ -115,7 +148,7 @@ func messageWraper(message string) string {
 	return message + "\n"
 }
 
-func sendHeartBeat(client *ClientConn, closeInfo chan byte) {
+func sendHeartBeat(client *ClientConn) {
 	for {
 		if !client.Status {
 			break
@@ -130,8 +163,15 @@ func sendHeartBeat(client *ClientConn, closeInfo chan byte) {
 }
 
 func onConnectionClose(client *ClientConn) {
-	client.Conn.Close()
 	client.Status = false
+	defer func() {
+		client.Conn.Close()
+	}()
+}
+
+func sendCommand(client *ClientConn, command string) {
+	b := []byte(messageWraper("#MYB<#CMD>" + command))
+	client.Conn.Write(b)
 }
 
 func mainThreadQuit() {
